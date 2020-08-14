@@ -89,6 +89,7 @@ class SentenceTransformer(nn.Sequential):
             device = "cuda" if torch.cuda.is_available() else "cpu"
             logging.info("Use pytorch device: {}".format(device))
 
+        self.n_gpu = torch.cuda.device_count()
         self._target_device = torch.device(device)
         self.parallel_tokenization = multiprocessing.get_start_method() == 'fork'   #parallel_tokenization only works if the Operating System support fork
         self.parallel_tokenization_processes = min(4, cpu_count())                  #Number of parallel processes used for tokenization. Increase up to cpu_count() for faster tokenization
@@ -404,6 +405,10 @@ class SentenceTransformer(nn.Sequential):
                 loss_models[train_idx] = model
                 optimizers[train_idx] = optimizer
 
+        if self.n_gpu > 1:
+            for train_idx in range(len(loss_models)):
+                loss_models[train_idx] = torch.nn.DataParallel(loss_models[train_idx])
+
         global_step = 0
         data_iterators = [iter(dataloader) for dataloader in dataloaders]
 
@@ -433,6 +438,9 @@ class SentenceTransformer(nn.Sequential):
 
                     features, labels = batch_to_device(data, self._target_device)
                     loss_value = loss_model(features, labels)
+
+                    if self.n_gpu > 1:
+                        loss_value = loss_value.mean()
 
                     if fp16:
                         with amp.scale_loss(loss_value, optimizer) as scaled_loss:
